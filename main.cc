@@ -211,6 +211,16 @@ public:
         }
         return res;
     }
+    
+    unsigned int getMaxCount() const {
+        unsigned int maxCount(0);
+        for (auto const& row : counts){
+            for (auto const& count : row){
+                if (maxCount < count) maxCount = count;
+            }
+        }
+        return maxCount;
+    }
 };
 
 
@@ -381,14 +391,17 @@ public:
         ParentNode::filterFor(emptySequence, rule);
     }
 
-    void statsFor(seq_t const& guess) const{
+    unsigned int statsFor(seq_t const& guess, bool verbose) const{
         seq_t emptySequence({});
         rule_t semiRule(guess);
         resCoun_t resCount(ParentNode::statsFor(emptySequence, semiRule));
-        std::cout << "Analysis for guess ";
-        myPrint(guess);
-        std::cout << std::endl;
-        std::cout << resCount << std::endl;
+        if (verbose){
+            std::cout << "Analysis for guess ";
+            myPrint(guess);
+            std::cout << std::endl;
+            std::cout << resCount;
+        }
+        return resCount.getMaxCount();
     }
 };
 
@@ -413,7 +426,7 @@ void generateAllStartingPatterns(seq_t prefix, size_t maxRepetitions, std::vecto
 }
 
 
-void exploreFirstMove(RootNode const& possibilities){
+void exploreFirstMove(RootNode const& possibilities, bool verbose = true){
     std::cout << "Let's explore the first move together." << std::endl;
     if (possibilities.exploreAllPoss(false).getCount() != std::pow(nClrs, nSlots)){
         throw std::logic_error("Error: First move exploration does not yield all possibilities");
@@ -425,17 +438,97 @@ void exploreFirstMove(RootNode const& possibilities){
 
     for (size_t i(0); i < allPatterns.size(); ++i){
         seq_t const& pattern(allPatterns[i]);
-        std::cout << "Exploring pattern " << i+1 << "/" << allPatterns.size() << ": " << seqToString(pattern) << std::endl;
-        possibilities.statsFor(pattern);
+        std::cout << "Exploring pattern " << i+1 << "/" << allPatterns.size() << ":" << std::endl;
+        unsigned int maxCount(possibilities.statsFor(pattern, verbose));
+        std::cout << "Pattern " << seqToString(pattern) << " has maximum count of " << maxCount << std::endl;
+        std::cout << std::endl;
+    }
+}
+
+seq_t listenForSequence(){
+    std::cout << "Please enter a sequence of " << nSlots << " letters (A-" << (char)('A'+nClrs-1)<< ") for the first move (";
+    for (size_t i(0); i < nSlots; ++i) std::cout << "#";
+    std::cout << "): ";
+    seq_t res;
+    for (size_t i(0); i < nSlots; ++i){
+        char c(0);
+        std::cin >> c;
+        if (c < 'A' || (char)('A'+nClrs-1) < c) {
+            throw std::invalid_argument("Error: Invalid character");
+        }
+        res.push_back(clr_t(c - 'A'));
+    }
+    return res;
+}
+
+res_t listenForRes(){
+    std::cout << "Please enter the number of correct colors: ";
+    unsigned int correct;
+    std::cin >> correct;
+    std::cout << "Please enter the number of misplaced colors: ";
+    unsigned int misplaced;
+    std::cin >> misplaced;
+    return res_t(correct, misplaced);
+}
+
+void letUserCheat(RootNode& possibilities){
+    std::cout << "=======================================" << std::endl;
+    std::cout << "Welcome to the user-guided exploration!" << std::endl;
+    while (true){
+        std::cout << std::endl;
+        std::cout << possibilities.exploreAllPoss(false) << std::endl;
+        std::cout << "Do you want to List all possibilities (L)," << std::endl;
+        std::cout << "               explore a specific Guess (G)," << std::endl;
+        std::cout << "               apply a specific Rule (R)" << std::endl;
+        std::cout << "            or explore All possible guesses (A)?" << std::endl;
+        std::cout << "Enter the choice: ";
+        char choice;
+        std::cin >> choice;
+        switch (choice){
+            case 'L':
+                possibilities.exploreAllPoss(true);
+                break;
+            case 'G':
+            {
+                std::cout << "What guess do you want to evaluate?" << std::endl;
+                seq_t guess(listenForSequence());
+                possibilities.statsFor(guess, true);
+                break;
+            }
+            case 'R':
+            {
+                std::cout << "What guess the rule correspond to?" << std::endl;
+                seq_t seq(listenForSequence());
+                std::cout << "What result did the guess obtain?" << std::endl;
+                res_t res(listenForRes());
+                possibilities.filterFor(rule_t(seq, res));
+                break;
+            }
+            case 'A':
+                std::cout << "Not yet implemented" << std::endl;
+                break;
+            default:
+                std::cout << "Incorrect input." << std::endl;
+        }
     }
 }
 
 
 
 int main(){
+    std::cout << "Welcome to the Mastermind solver!" << std::endl;
+    std::cout << "Be warned that this will take as memory approximately:" << std::endl;
+    std::cout << std::pow(nClrs, nSlots - 1) << " x " << sizeof(ParentNode) << " bytes." << std::endl;
+    std::cout << std::pow(nClrs, nSlots) << " x " << sizeof(LeafNode) << " bytes." << std::endl;
+    long long unsigned int weightParents(std::pow(nClrs, nSlots-1) * sizeof(ParentNode));
+    long long unsigned int weightLeafs(std::pow(nClrs, nSlots) * sizeof(LeafNode));
+    std::cout << "= " << (weightParents + weightLeafs)/ (1024 * 1024) << " MB" << std::endl;
     RootNode possibilities;
 
-    exploreFirstMove(possibilities);
+    exploreFirstMove(possibilities, false);
+
+
+    letUserCheat(possibilities);
     /*
     possibilities.exploreAllPoss();
     std::cout << std::endl;

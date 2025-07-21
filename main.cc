@@ -3,6 +3,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
+#include <thread>
+#include <ctime>
 
 
 #define nClrs 8
@@ -202,13 +204,21 @@ public:
 
     std::string toString() const {
         std::string res = "Result counts:\n";
+        unsigned int max(0);
+        unsigned int minI(0), minJ(0);
         for (unsigned int i(0); i <= nSlots; ++i){
             for (unsigned int j(0); j <= nSlots; ++j){
                 if (0 < counts[i][j]) {
                     res += "Correct: " + std::to_string(i) + ", Misplaced: " + std::to_string(j) + " -> Count: " + std::to_string(counts[i][j]) + "\n";
                 }
+                if (max < counts[i][j]){
+                    max = counts[i][j];
+                    minI = i;
+                    minJ = j;
+                }
             }
         }
+        res += "The maximum count is " + std::to_string(max) + " for Correct: " + std::to_string(minI) + ", Misplaced: " + std::to_string(minJ) + "\n";
         return res;
     }
     
@@ -372,9 +382,12 @@ public:
 
 
 class RootNode : public ParentNode{
+private:
+    std::vector<rule_t> rules;
+    unsigned int possCount;
 public:
     RootNode()
-    :ParentNode(0) {}
+    :ParentNode(0), rules({}), possCount(std::pow(nClrs, nSlots)){}
 
     explorationResul_t exploreAllPoss(bool printAll = true) const{
         if (printAll) std::cout << "Printing all possibilities:" << std::endl;
@@ -385,10 +398,15 @@ public:
     }
 
     void filterFor(rule_t const& rule){
-        seq_t emptySequence({});
+        std::cout << std::endl;
         std::cout << "Filtering for information " << rule << std::endl;
         std::cout << std::endl;
+
+        rules.push_back(rule);
+
+        seq_t emptySequence({});
         ParentNode::filterFor(emptySequence, rule);
+        possCount = exploreAllPoss(false).getCount();
     }
 
     unsigned int statsFor(seq_t const& guess, bool verbose) const{
@@ -402,6 +420,21 @@ public:
             std::cout << resCount;
         }
         return resCount.getMaxCount();
+    }
+
+    unsigned int getRuleCount() const {
+        return rules.size();
+    }
+
+    unsigned int getPossCount() const {
+        return possCount;
+    }
+
+    void printRules() const {
+        std::cout << "Previous rules:" << std::endl;
+        for (size_t i(0); i < rules.size(); ++i){
+            std::cout << "  " << i+1 << ": " << rules[i] << std::endl;
+        }
     }
 };
 
@@ -428,21 +461,84 @@ void generateAllStartingPatterns(seq_t prefix, size_t maxRepetitions, std::vecto
 
 void exploreFirstMove(RootNode const& possibilities, bool verbose = true){
     std::cout << "Let's explore the first move together." << std::endl;
-    if (possibilities.exploreAllPoss(false).getCount() != std::pow(nClrs, nSlots)){
+    if (possibilities.getPossCount() != std::pow(nClrs, nSlots)){
         throw std::logic_error("Error: First move exploration does not yield all possibilities");
     }
-    std::cout << "There are " << std::pow(nClrs, nSlots) << " possibilities." << std::endl;
+    std::cout << "There are " << std::pow(nClrs, nSlots) << " total possibilities." << std::endl;
+    std::cout << std::endl;
 
     std::vector<seq_t> allPatterns({});
     generateAllStartingPatterns(seq_t({}), nSlots, allPatterns);
 
+    unsigned int minMax(std::pow(nClrs, nSlots));
+    seq_t minPattern({});
     for (size_t i(0); i < allPatterns.size(); ++i){
         seq_t const& pattern(allPatterns[i]);
         std::cout << "Exploring pattern " << i+1 << "/" << allPatterns.size() << ":" << std::endl;
         unsigned int maxCount(possibilities.statsFor(pattern, verbose));
+        if (maxCount < minMax) {
+            minMax = maxCount;
+            minPattern = pattern;
+        }
         std::cout << "Pattern " << seqToString(pattern) << " has maximum count of " << maxCount << std::endl;
         std::cout << std::endl;
     }
+
+    std::cout << "The best pattern is " << seqToString(minPattern) << " with a maximum count of " << minMax << "  (reduction of " << std::pow(nClrs, nSlots) /minMax << ")." << std::endl;
+}
+
+struct recOutput{
+    seq_t bestGuess;
+    unsigned int minMax;
+};
+
+recOutput exploreSubGuesses(seq_t const& prefix, RootNode const& possibilities, time_t startTime, unsigned int& nTalks, unsigned int& waitTime){
+    // if (prefix.size() == 1 and verbose) std::cout << " #" << prefix[0] << " " << std::flush;
+    // if (prefix.size() == 2 and verbose) std::cout << prefix[1] << std::flush;
+
+    time_t currentTime(std::time(nullptr));
+    if (currentTime - startTime >= waitTime){
+        std::cout << seqToString(prefix) << " has been explored. (" << currentTime - startTime << " seconds)" << std::endl;
+        nTalks += 1;
+        waitTime += nTalks;
+    }
+
+    if (prefix.size() == nSlots) return recOutput{prefix, possibilities.statsFor(prefix, false)};
+
+    recOutput myRes({seq_t({}), possibilities.getPossCount()});
+    for (clr_t clr(0); clr < nClrs; ++clr){
+        seq_t newPrefix(prefix);
+        newPrefix.push_back(clr);
+        recOutput res(exploreSubGuesses(newPrefix, possibilities, startTime, nTalks, waitTime));
+        if (res.minMax < myRes.minMax) {
+            myRes = res;
+        }
+    }
+    return myRes;
+}
+
+
+void exploreAllGuesses(RootNode const& possibilities){
+    std::cout << "Let's explore all possible guesses together." << std::endl;
+    std::cout << "There are " << std::pow(nClrs, nSlots) << " total guesses." << std::endl;
+    std::cout << "And only " << possibilities.getPossCount() << " still valid possibilities." << std::endl;
+    std::cout << "(Making " << possibilities.getPossCount() * std::pow(nClrs, nSlots) << " tries)" << std::endl;
+    std::cout << std::endl;
+
+    std::time_t startTime(std::time(nullptr));
+    unsigned int waitTime(1);
+    unsigned int nTalks(0);
+    //bool verbose(possibilities.getPossCount() * std::pow(nClrs, nSlots) > 1000000);
+
+    /*  // We could explore parallelism.
+    std::cout << "HARDWARE CONCURRENCY: ";
+    std::cout << std::thread::hardware_concurrency() << std::endl;
+    */
+
+    recOutput res(exploreSubGuesses(seq_t({}), possibilities, startTime, nTalks, waitTime));
+
+    std::cout << std::endl;
+    std::cout << "A good (BUT NOT NEC. THE BEST ONE) guess is " << seqToString(res.bestGuess) << " with a maximum count of " << res.minMax << "  (reduction of " << ((double)(possibilities.getPossCount())) /res.minMax << ")." << std::endl;
 }
 
 seq_t listenForSequence(){
@@ -453,6 +549,7 @@ seq_t listenForSequence(){
     for (size_t i(0); i < nSlots; ++i){
         char c(0);
         std::cin >> c;
+        c = toupper(c);
         if (c < 'A' || (char)('A'+nClrs-1) < c) {
             throw std::invalid_argument("Error: Invalid character");
         }
@@ -472,19 +569,36 @@ res_t listenForRes(){
 }
 
 void letUserCheat(RootNode& possibilities){
+    std::cout << std::endl;
     std::cout << "=======================================" << std::endl;
     std::cout << "Welcome to the user-guided exploration!" << std::endl;
     while (true){
         std::cout << std::endl;
-        std::cout << possibilities.exploreAllPoss(false) << std::endl;
-        std::cout << "Do you want to List all possibilities (L)," << std::endl;
+        std::cout << ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>" << std::endl;
+        unsigned int nPoss(possibilities.getPossCount());
+        if (nPoss == 1) {
+            std::cout << "There is only one secret code still possible ";
+        } else {
+            std::cout << "There are " << nPoss << " codes still possibles ";
+        }
+        std::cout << "according to " << possibilities.getRuleCount() << " rules." << std::endl;
+        std::cout << "Do you want to" << std::endl;
+        std::cout << "               see all Previous rules (P)," << std::endl;
+        std::cout << "               List all possibilities (L)," << std::endl;
         std::cout << "               explore a specific Guess (G)," << std::endl;
-        std::cout << "               apply a specific Rule (R)" << std::endl;
-        std::cout << "            or explore All possible guesses (A)?" << std::endl;
+        if (possibilities.getRuleCount() == 0){
+        std::cout << "               explore all Starting guesses (S)," << std::endl;}
+        std::cout << "               explore All possible guesses (A)" << std::endl;
+        std::cout << "            or apply a specific Rule (R)?" << std::endl;
         std::cout << "Enter the choice: ";
         char choice;
         std::cin >> choice;
+        choice = toupper(choice);
+        std::cout << "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<" << std::endl;
         switch (choice){
+            case 'P':
+                possibilities.printRules();
+                break;
             case 'L':
                 possibilities.exploreAllPoss(true);
                 break;
@@ -495,18 +609,50 @@ void letUserCheat(RootNode& possibilities){
                 possibilities.statsFor(guess, true);
                 break;
             }
+            case 'S':
+                if (possibilities.getRuleCount() == 0){
+                    char answer('x');
+                    while (answer != 'Y' && answer != 'N'){
+                        std::cout << "Do you want to print details? (Y/N): ";
+                        std::cin >> answer;
+                        answer = toupper(answer);
+                        if (answer != 'Y' && answer != 'N') {
+                            std::cout << "Please enter Y or N." << std::endl;
+                        }
+                    }
+                    std::cout << std::endl;
+                    exploreFirstMove(possibilities, (answer == 'Y'));
+                } else {
+                    std::cout << "You can't explore all starting guesses after you have already applied a rule." << std::endl;
+                }
+                break;
+            case 'A':
+            {
+                if (possibilities.getRuleCount() == 0){
+                    std::cout << "You are still at the first move. This may take a LONG time." << std::endl;
+                    std::cout << "Please explore the (optimised) first move patterns instead." << std::endl;
+                    char answer('x');
+                    std::cout << "Do you want to continue? Press (Y) to continue: ";
+                    std::cin >> answer;
+                    answer = toupper(answer);
+                    if (answer != 'Y') {
+                        std::cout << "Aborting..." << std::endl;
+                        break;
+                    }
+                }
+                std::cout << std::endl;
+                exploreAllGuesses(possibilities);
+                break;
+            }
             case 'R':
             {
-                std::cout << "What guess the rule correspond to?" << std::endl;
+                std::cout << "What guess does the rule correspond to?" << std::endl;
                 seq_t seq(listenForSequence());
-                std::cout << "What result did the guess obtain?" << std::endl;
+                std::cout << "What result did that guess obtain?" << std::endl;
                 res_t res(listenForRes());
                 possibilities.filterFor(rule_t(seq, res));
                 break;
             }
-            case 'A':
-                std::cout << "Not yet implemented" << std::endl;
-                break;
             default:
                 std::cout << "Incorrect input." << std::endl;
         }
@@ -514,15 +660,29 @@ void letUserCheat(RootNode& possibilities){
 }
 
 
+/* TODO LIST */
+// Creating an option "Apply the best rule (heuristically)."
+// Creating an option to test all guesses RECURSIVELY to know the true max number of guesses (hard).
+// Creating an "autopilot" mode playing against a cheater
+// Comparing between still possible guesses or "external" guesses.
+
+
 
 int main(){
     std::cout << "Welcome to the Mastermind solver!" << std::endl;
-    std::cout << "Be warned that this will take as memory approximately:" << std::endl;
-    std::cout << std::pow(nClrs, nSlots - 1) << " x " << sizeof(ParentNode) << " bytes." << std::endl;
-    std::cout << std::pow(nClrs, nSlots) << " x " << sizeof(LeafNode) << " bytes." << std::endl;
+
     long long unsigned int weightParents(std::pow(nClrs, nSlots-1) * sizeof(ParentNode));
     long long unsigned int weightLeafs(std::pow(nClrs, nSlots) * sizeof(LeafNode));
-    std::cout << "= " << (weightParents + weightLeafs)/ (1024 * 1024) << " MB" << std::endl;
+    if ((1024 * 1024) < (weightParents + weightLeafs)){
+        std::cout << "Be warned that this will take as memory approximately:" << std::endl;
+        std::cout << "  " << std::pow(nClrs, nSlots - 1) << " x " << sizeof(ParentNode) << " bytes." << std::endl;
+        std::cout << "+ " << std::pow(nClrs, nSlots) << " x " << sizeof(LeafNode) << " bytes." << std::endl;
+        std::cout << "= " << (weightParents + weightLeafs)/ (1024 * 1024) << " MB" << std::endl;
+        std::cout << std::endl;
+    }
+
+
+
     RootNode possibilities;
 
     exploreFirstMove(possibilities, false);
